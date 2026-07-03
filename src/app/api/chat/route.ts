@@ -5,11 +5,15 @@ import { streamChat, rewriteStandaloneQuery, generateFollowUps, ChatMessage } fr
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-// Only chunks scoring above this are considered "relevant"
-const MIN_SCORE = parseFloat(process.env.MIN_RETRIEVAL_SCORE || '0.65');
+// Only chunks scoring above this are considered "relevant".
+// NOTE: these defaults are calibrated for all-MiniLM-L6-v2, which produces
+// lower cosine scores than larger embedding models — keep in sync with
+// .env.example. If these env vars aren't set in your deploy environment
+// (e.g. Vercel), THIS fallback is what actually runs in production.
+const MIN_SCORE = parseFloat(process.env.MIN_RETRIEVAL_SCORE || '0.30');
 
 // If the single best chunk doesn't hit this, it's definitely off-topic
-const MIN_TOP_SCORE = parseFloat(process.env.MIN_TOP_RETRIEVAL_SCORE || '0.60');
+const MIN_TOP_SCORE = parseFloat(process.env.MIN_TOP_RETRIEVAL_SCORE || '0.25');
 
 // How many prior messages (~ last few turns) to keep as context — both
 // for rewriting follow-up questions into standalone search queries and
@@ -125,15 +129,29 @@ export async function POST(req: NextRequest) {
           }
           controller.enqueue(encoder.encode(JSON.stringify({ citations }) + '\n'));
 
-          // M6: Suggest follow-up questions grounded in this exchange
-          // plus the last few turns of conversation.
-          const suggestions = await generateFollowUps(
+          // M6: Suggest follow-up questions grounded in this exchange,
+          // the last few turns of conversation, AND the excerpts that
+          // were actually retrieved — then double-check each candidate
+          // against real retrieval so we never surface a suggestion the
+          // corpus can't actually answer (avoids "couldn't find it"
+          // on a question we ourselves proposed).
+          const candidates = await generateFollowUps(
             priorMessages as ChatMessage[],
             lastUserMsg.content,
             answerText,
+            context,
           );
-          if (suggestions.length > 0) {
-            controller.enqueue(encoder.encode(JSON.stringify({ suggestions }) + '\n'));
+
+          const validated: string[] = [];
+          for (const candidate of candidates) {
+            const candidateChunks = await retrieve(candidate);
+            if ((candidateChunks[0]?.score ?? 0) >= MIN_TOP_SCORE) {
+              validated.push(candidate);
+            }
+          }
+
+          if (validated.length > 0) {
+            controller.enqueue(encoder.encode(JSON.stringify({ suggestions: validated }) + '\n'));
           }
 
           controller.enqueue(encoder.encode(JSON.stringify({ done: true }) + '\n'));

@@ -188,6 +188,7 @@ export async function generateFollowUps(
   history: ChatMessage[],
   question: string,
   answer: string,
+  contextExcerpt: string,
 ): Promise<string[]> {
   if (!GROQ_API_KEY) return [];
 
@@ -200,14 +201,21 @@ export async function generateFollowUps(
       role: 'system',
       content:
         'You suggest short follow-up questions for a FastAPI documentation chat assistant. ' +
-        'Given the recent conversation and the answer just given, suggest 3 natural next ' +
-        'questions the user might ask — things that build on this specific exchange, not ' +
-        'generic FastAPI trivia. Keep each under 12 words, phrased as a question. ' +
+        'The assistant can ONLY answer from a specific set of ingested documentation pages — ' +
+        'not general FastAPI knowledge. Base your suggestions strictly on topics, features, or ' +
+        'terms that actually appear in the "Retrieved documentation excerpts" below. ' +
+        'Do NOT suggest questions about topics merely related to FastAPI in general if they are ' +
+        'not mentioned in the excerpts — the goal is questions this same excerpt set can answer. ' +
+        'Suggest 3 natural next questions that build on this specific exchange. ' +
+        'Keep each under 12 words, phrased as a question. ' +
         'Respond with ONLY a JSON array of 3 strings, no explanation, no markdown fences.',
     },
     {
       role: 'user',
-      content: `Conversation:\n${historyText}\n\nAssistant's answer: ${answer}\n\nSuggest 3 follow-up questions as a JSON array:`,
+      content:
+        `Retrieved documentation excerpts (the ONLY source of truth for what can be asked next):\n${contextExcerpt}\n\n` +
+        `Conversation:\n${historyText}\n\nAssistant's answer: ${answer}\n\n` +
+        `Suggest 3 follow-up questions as a JSON array, grounded only in the excerpts above:`,
     },
   ];
 
